@@ -1,18 +1,20 @@
-import json
 import re
 import bs4
 import requests
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta
+from selenium import webdriver
 
 import config
 import time
 
 
-# TODO перевести всё на укр добавив в ЮРЛ /uk/
+# TODO перевести всё на укр добавив в УРЛ /uk/
 class OlxParser:
-    f = open(config.FILENAME, 'w')
+    f = open(config.FILENAME, 'a')  # file opened in append mode
     writer = csv.DictWriter(f, lineterminator='\n', fieldnames=config.FILDNAMES)
+    driver = webdriver.Firefox(executable_path='../drivers/geckodriver')
+    time_to_sleep_for_page_downloading = 2  # seconds
 
     def get_html(self, url):
         r = requests.get(url)
@@ -33,54 +35,80 @@ class OlxParser:
                 price = 'Не указано'
 
             delivery = tr.find('div', class_='delivery-badge')
-            top_post = tr.find('td', class_="offer promoted ")
+            delivery_2 = tr.find('span', class_='delivery-badge')
+            delivery = delivery if delivery else delivery_2
 
             href = tr.find('a').get('href')
+            try:
+                top_post = re.search(r'^.*;(promoted)$', href).group(1)
+            except AttributeError:
+                top_post = None
 
             data = {
                 'href': href,
                 'name': self.clean_name(tr.find('strong').text),
                 'date': self.clean_date(tr.find('td', valign="bottom").findAll('span')[1].text.strip()),
                 'place': tr.find('td', valign="bottom").findAll('span')[0].text.strip(),
-                'cathegory': tr.find('small', class_='breadcrumb x-normal').text.strip(),
+                'category': tr.find('small', class_='breadcrumb x-normal').text.strip(),
                 'price': self.clean_price(price),
                 'olxdelivery': True if delivery else False,
                 'is_promoted': True if top_post else False
             }
 
-            additional_data = self.get_more_product_data(href)
-
-            self.write_data(dict(data, **additional_data))
+            try:
+                additional_data = self.get_more_product_data(href)
+            except Exception as e:
+                print(f"problem here: {href}\nerror: {e}")
+                continue  # don't write this data to the dataset
+            self.write_data(dict({'created_time': datetime.now()}, **data, **additional_data))
 
     def get_more_product_data(self, product_url) -> dict:
         html = self.get_htmlv2(f'{product_url}')
         soup = bs4.BeautifulSoup(html, 'lxml')
 
-        author_from = soup.body.find('div', text=re.compile('на OLX с'))
+        self.driver.get(product_url)
+        time.sleep(self.time_to_sleep_for_page_downloading)
+        html_2 = self.driver.page_source
+        soup_2 = bs4.BeautifulSoup(html_2, 'lxml')
+
+        author_from = soup_2.body.find('div', text=re.compile('на OLX с'))
         # TODO format to the standart date and calculate now - this date to see how long the auth on OLX
         author_from_data = re.search("на OLX с (.*)</div>", str(author_from)).group(1)
 
-        # doest work because it's dynamic data
-        # auth_rating = soup.body.find('div', attrs={"data-testid": "listing-seller-rating-sentiment"}) \
-        #     .findAll('span')[0].text.strip().replace(':', '')
+        try:
+            auth_rating = soup_2.body.find('div', attrs={"data-testid": "listing-seller-rating-sentiment"}) \
+                .findAll('span')[0].text.strip().replace(':', '')
+        except AttributeError:
+            auth_rating = "нет ни одного отзыва"
 
-        views = 0
-        # views = soup.find(text=re.compile('Просмотров:'))
-        # print(str(views))
-        # # print(f'views: {views}')
-        # views = re.search('Просмотров: (\\d*)', str(views)).group(1)
-        # print(f'views: {views}')
+        views = soup_2.find(text=re.compile('Просмотров:'))
+
+        try:
+            views = re.search('Просмотров: (\\d*)', str(views)).group(1)
+        except AttributeError:
+            views = "нет просмотров"
 
         # TODO check how it works when there is no photo
-        photos = soup.find('div', class_='swiper-wrapper').findChildren("div", recursive=False)
-        photos_number = len(photos)
+        try:
+            photos = soup.find('div', class_='swiper-wrapper').findChildren("div", recursive=False)
+            photos_number = len(photos)
+        except AttributeError:
+            photos_number = 0
+
+        try:
+            description = soup_2.body.find('div', attrs={"data-cy": "ad_description"}) \
+                .findChildren('div', recursive=False)[0].text.strip()
+        except AttributeError:
+            description = 'N/A'
 
         data = {
             'author_from_data': author_from_data if author_from_data else None,
             'views': views if views else None,
-            'photos_number': photos_number if photos_number else None
+            'auth_rating': auth_rating,
+            'photos_number': photos_number if photos_number else None,
+            'description': description
         }
-        # print(f'Product info {data}')
+
         return data
 
     def clean_price(self, price):
@@ -91,14 +119,18 @@ class OlxParser:
             return result.replace(' ', '')
 
     def clean_date(self, publications_date):
-        res = re.search('(.*) \\d{2}:\\d{2}', publications_date)
-
+        res = re.search('(.*) (\\d{2}):(\\d{2})', publications_date)
         if res and res.group(1) == 'Сегодня':
-            date = f'{datetime.today().day} {config.PARAMS[datetime.today().month]}'
-            return date
+            date = datetime.today()
+            hour = int(res.group(2))
+            minute = int(res.group(3))
+            return date.replace(hour=hour, minute=minute)
+
         elif res and res.group(1) == 'Вчера':
-            date = f'{datetime.today().day - 1} {config.PARAMS[datetime.today().month]}'
-            return date
+            date = datetime.today() - timedelta(days=1)
+            hour = int(res.group(2))
+            minute = int(res.group(3))
+            return date.replace(hour=hour, minute=minute)
         else:
             return publications_date
 
@@ -111,51 +143,59 @@ class OlxParser:
 
     def write_head(self):
         self.write_data({
+            'created_time': 'Created_time',
             'href': 'URL',
-            'name': 'НАЗВАНИЕ',
-            'cathegory': 'КАТЕГОРИЯ',
-            'price': 'ЦЕНА',
-            'place': 'ГОРОД',
-            'date': 'ДАТА',
-            'olxdelivery': 'ДОСТАВКА',
-            'is_promoted': 'Рекламний пост?',
-            'author_from_data': 'Автор на ОЛХ з',
-            'views': 'Переглядів',
-            'photos_number': 'Кількість фото'
+            'name': 'Name',
+            'category': 'Category',
+            'price': 'Price',
+            'place': 'Address',
+            'date': 'Date',
+            'olxdelivery': 'OlxDelivery',
+            'is_promoted': 'Is_promoted',
+            'author_from_data': 'Author_from_data',
+            'views': 'Views',
+            'auth_rating': 'Auth_rating',
+            'photos_number': 'Photos_number',
+            'description': 'Description'
         })
 
     def main(self):
         self.write_head()
-        url = config.URL
-        page = 1
+        urls = config.URL
         start_time = datetime.now()
         print(f"Start time: {start_time}")
 
-        while True:
+        for url in urls:
+            page = 1
+            error = "No error"
+            while True:
 
-            try:
-                html = self.get_html(f'{url}?page={page}')
-                if html:
-                    self.get_data(html)
-                    page += 1
-                else:
-                    break
+                try:
+                    html = self.get_html(f'{url}?page={page}')
+                    if html:
+                        self.get_data(html)
+                        page += 1
+                    else:
+                        break
 
-            except AttributeError:
-                time.sleep(1)
-                html = self.get_html(url)
-                if html:
-                    self.get_data(html)
-                    page += 1
-                else:
-                    break
-            finally:
-                end_time = datetime.now()
-                print(f"End time: {end_time}")
-                print(f"Work time: {end_time - start_time}")
-                self.f.close()
+                except AttributeError as e:
+                    error = e
+                    time.sleep(self.time_to_sleep_for_page_downloading)
+                    html = self.get_html(url)
+                    if html:
+                        self.get_data(html)
+                        page += 1
+                    else:
+                        break
+                finally:
+                    end_time = datetime.now()
+                    print(f"End time: {end_time} \nError: {error}")
+                    # print(f"Work time: {end_time - start_time}")
 
-
+        self.f.close()
+        end_time = datetime.now()
+        print(f"Final end time: {end_time}")
+        print(f"Work time: {end_time - start_time}")
 
 
 if __name__ == '__main__':

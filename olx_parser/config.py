@@ -13,16 +13,18 @@ PARAMS = {
     12: 'декабрь',
 }
 
-# РЕДАКТИРОВАТЬ ТОЛЬКО ТО, ЧТО НИЖЕ ЭТОЙ СТРОКИ!!!
-
-URL = 'https://www.olx.ua/list/q-iphone-11/'
+URLs = [
+    'https://www.olx.ua/elektronika/telefony-i-aksesuary/',
+    'https://www.olx.ua/elektronika/audiotehnika/naushniki/'
+]
 
 FILENAME = 'result.csv'
 
 FILDNAMES = [
+    'created_time',
     'href',
     'name',
-    'cathegory',
+    'category',
     'price',
     'place',
     'date',
@@ -30,5 +32,7 @@ FILDNAMES = [
     'is_promoted',
     'author_from_data',
     'views',
-    'photos_number'
+    'auth_rating',
+    'photos_number',
+    'description'
 ]
