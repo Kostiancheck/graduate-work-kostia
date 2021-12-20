@@ -14,11 +14,11 @@ class OlxParser:
     f = open(config.FILENAME, 'a')  # file opened in append mode
     writer = csv.DictWriter(f, lineterminator='\n', fieldnames=config.FILDNAMES)
     driver = webdriver.Firefox(executable_path='../drivers/geckodriver')
-    time_to_sleep_for_page_downloading = 2  # seconds
+    time_to_sleep_for_page_downloading = 1  # seconds
 
     def get_html(self, url):
         r = requests.get(url)
-        return r.text if re.search(config.URL, r.url) else None
+        return r.text
 
     def get_htmlv2(self, url):
         r = requests.get(url)
@@ -161,13 +161,14 @@ class OlxParser:
 
     def main(self):
         self.write_head()
-        urls = config.URL
+        urls = config.URLs
         start_time = datetime.now()
         print(f"Start time: {start_time}")
 
         for url in urls:
             page = 1
             error = "No error"
+            tries = 1
             while True:
 
                 try:
@@ -176,7 +177,12 @@ class OlxParser:
                         self.get_data(html)
                         page += 1
                     else:
-                        break
+                        if tries < 10:
+                            print(f"Try {tries} \n URL: {url}?page={page} HTML: {html}")
+                            tries += 1
+                            continue
+                        else:
+                            break
 
                 except AttributeError as e:
                     error = e
@@ -186,10 +192,15 @@ class OlxParser:
                         self.get_data(html)
                         page += 1
                     else:
-                        break
+                        if tries < 10:
+                            print(f"Try {tries} \n URL: {url}?page={page} HTML: {html}")
+                            tries += 1
+                            continue
+                        else:
+                            break
                 finally:
                     end_time = datetime.now()
-                    print(f"End time: {end_time} \nError: {error}")
+                    print(f"End time: {end_time} \n Tries: {tries} Error: {error}")
                     # print(f"Work time: {end_time - start_time}")
 
         self.f.close()
