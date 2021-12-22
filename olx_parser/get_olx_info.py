@@ -17,8 +17,16 @@ class OlxParser:
     time_to_sleep_for_page_downloading = 1  # seconds
 
     def get_html(self, url):
-        r = requests.get(url)
-        return r.text
+        error = ""
+        for i in range(5):
+            try:
+                r = requests.get(url)
+                return r.text
+            except Exception as e:
+                error = e
+
+        raise error
+
 
     def get_htmlv2(self, url):
         r = requests.get(url)
