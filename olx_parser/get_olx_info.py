@@ -27,7 +27,6 @@ class OlxParser:
 
         raise error
 
-
     def get_htmlv2(self, url):
         r = requests.get(url)
         return r.text if re.search('https://www.olx.ua/', r.url) else None
@@ -35,7 +34,7 @@ class OlxParser:
     def get_data(self, html):
         soup = bs4.BeautifulSoup(html, 'lxml')
         trs = soup.find('table', id='offers_table').findAll('tr', class_='wrap')
-
+        problems = 0
         for tr in trs:
             try:
                 price = tr.find('p', class_='price').find('strong').text
@@ -66,8 +65,15 @@ class OlxParser:
             try:
                 additional_data = self.get_more_product_data(href)
             except Exception as e:
+                if problems > 10:  # if problem raised more than 10 times, rerun the driver
+                    self.rerun_driver()
+                    problems = 0
+                    print("Driver rerun")
+                    continue
+                problems += 1
                 print(f"problem here: {href}\nerror: {e}")
                 continue  # don't write this data to the dataset
+
             self.write_data(dict({'created_time': datetime.now()}, **data, **additional_data))
 
     def get_more_product_data(self, product_url) -> dict:
@@ -148,6 +154,11 @@ class OlxParser:
     def write_data(self, data):
         print(f'Final data: {data}')
         self.writer.writerow(data)
+
+    def rerun_driver(self):
+        self.driver = webdriver.Firefox(executable_path='../drivers/geckodriver')
+        time.sleep(self.time_to_sleep_for_page_downloading)
+        return 0
 
     def write_head(self):
         self.write_data({
